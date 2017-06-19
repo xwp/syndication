@@ -38,3 +38,7 @@ new Syndication_Site_Failure_Monitor();
 // Create the site auto retry functionality
 require __DIR__ . '/includes/class-syndication-site-auto-retry.php';
 new Failed_Syndication_Auto_Retry();
+
+// Create syndication notifier
+require __DIR__ . '/includes/class-syndication-notifier.php';
+new Syndication_Notifier();
