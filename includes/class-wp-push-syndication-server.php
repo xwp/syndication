@@ -143,6 +143,8 @@ class WP_Push_Syndication_Server {
 		$this->push_syndicate_default_settings = array(
 			'selected_pull_sitegroups'  => array(),
 			'selected_post_types'       => array( 'post' ),
+			'notification_methods'      => array(),
+			'notification_types'        => array(),
 			'delete_pushed_posts'       => 'off',
 			'pull_time_interval'        => '3600',
 			'update_pulled_posts'       => 'off',
@@ -301,20 +303,35 @@ class WP_Push_Syndication_Server {
 	}
 
 	public function push_syndicate_settings_validate( $raw_settings ) {
-
-		$settings                               = array();
 		$settings['client_id']                  = sanitize_text_field( $raw_settings['client_id'] );
 		$settings['client_secret']              = sanitize_text_field( $raw_settings['client_secret'] );
-		$settings['selected_post_types']        = !empty( $raw_settings['selected_post_types'] ) ? $raw_settings['selected_post_types'] : array() ;
-		$settings['delete_pushed_posts']        = !empty( $raw_settings['delete_pushed_posts'] ) ? $raw_settings['delete_pushed_posts'] : 'off' ;
-		$settings['selected_pull_sitegroups']   = !empty( $raw_settings['selected_pull_sitegroups'] ) ? $raw_settings['selected_pull_sitegroups'] : array() ;
-		$settings['pull_time_interval']         = !empty( $raw_settings['pull_time_interval'] ) ? max( $raw_settings['pull_time_interval'], 300 ) : '3600';
-		$settings['update_pulled_posts']        = !empty( $raw_settings['update_pulled_posts'] ) ? $raw_settings['update_pulled_posts'] : 'off' ;
+		$settings['selected_post_types']        = ! empty( $raw_settings['selected_post_types'] ) ? $raw_settings['selected_post_types'] : array();
+		$settings['notification_methods']       = ! empty( $raw_settings['notification_methods'] ) ? $raw_settings['notification_methods'] : array();
+		$settings['notification_types']         = ! empty( $raw_settings['notification_types'] ) ? $raw_settings['notification_types'] : array();
+		$settings['delete_pushed_posts']        = ! empty( $raw_settings['delete_pushed_posts'] ) ? $raw_settings['delete_pushed_posts'] : 'off';
+		$settings['selected_pull_sitegroups']   = ! empty( $raw_settings['selected_pull_sitegroups'] ) ? $raw_settings['selected_pull_sitegroups'] : array();
+		$settings['pull_time_interval']         = ! empty( $raw_settings['pull_time_interval'] ) ? max( $raw_settings['pull_time_interval'], 300 ) : '3600';
+		$settings['update_pulled_posts']        = ! empty( $raw_settings['update_pulled_posts'] ) ? $raw_settings['update_pulled_posts'] : 'off';
 
 		$this->pre_schedule_pull_content( $settings['selected_pull_sitegroups'] );
 
 		return $settings;
+	}
 
+	public function sanitize_array( $data ) {
+		if ( ! is_array( $data ) ) {
+			return sanitize_text_field( $data );
+		} else {
+			foreach ( $data as $key => $item ) {
+				if ( is_array( $item ) ) {
+					$data[ $key ] = $this->sanitize_array( $item );
+				} else {
+					$data[ $key ] = sanitize_text_field( $item );
+				}
+
+				return $data;
+			}
+		}
 	}
 
 	public function register_syndicate_settings() {
@@ -322,7 +339,6 @@ class WP_Push_Syndication_Server {
 	}
 
 	public function display_syndicate_settings() {
-
 		add_settings_section( 'push_syndicate_pull_sitegroups', esc_html__( 'Site Groups' , 'push-syndication' ), array( $this, 'display_pull_sitegroups_description' ), 'push_syndicate_pull_sitegroups' );
 		add_settings_field( 'pull_sitegroups_selection', esc_html__( 'select sitegroups', 'push-syndication' ), array( $this, 'display_pull_sitegroups_selection' ), 'push_syndicate_pull_sitegroups', 'push_syndicate_pull_sitegroups' );
 
@@ -332,17 +348,19 @@ class WP_Push_Syndication_Server {
 		add_settings_field( 'update_pulled_posts', esc_html__( 'update pulled posts', 'push-syndication' ), array( $this, 'display_update_pulled_posts_selection' ), 'push_syndicate_pull_options', 'push_syndicate_pull_options' );
 
 		add_settings_section( 'push_syndicate_post_types', esc_html__( 'Post Types' , 'push-syndication' ), array( $this, 'display_push_post_types_description' ), 'push_syndicate_post_types' );
-		add_settings_field( 'post_type_selection', esc_html__( 'select post types', 'push-syndication' ), array( $this, 'display_post_types_selection' ), 'push_syndicate_post_types', 'push_syndicate_post_types' );
+		add_settings_field( 'post_type_selection', esc_html__( 'Select post types', 'push-syndication' ), array( $this, 'display_post_types_selection' ), 'push_syndicate_post_types', 'push_syndicate_post_types' );
 
-		add_settings_section( 'delete_pushed_posts', esc_html__(' Delete Pushed Posts ', 'push-syndication' ), array( $this, 'display_delete_pushed_posts_description' ), 'delete_pushed_posts' );
-		add_settings_field( 'delete_post_check', esc_html__(' delete pushed posts ', 'push-syndication' ), array( $this, 'display_delete_pushed_posts_selection' ), 'delete_pushed_posts', 'delete_pushed_posts' );
+		add_settings_section( 'delete_pushed_posts', esc_html__( 'Delete Pushed Posts', 'push-syndication' ), array( $this, 'display_delete_pushed_posts_description' ), 'delete_pushed_posts' );
+		add_settings_field( 'delete_post_check', esc_html__( 'Delete pushed posts', 'push-syndication' ), array( $this, 'display_delete_pushed_posts_selection' ), 'delete_pushed_posts', 'delete_pushed_posts' );
 
-		add_settings_section( 'api_token', esc_html__(' API Token Configuration ', 'push-syndication' ), array( $this, 'display_apitoken_description' ), 'api_token' );
-		add_settings_field( 'client_id', esc_html__(' Enter your client id ', 'push-syndication' ), array( $this, 'display_client_id' ), 'api_token', 'api_token' );
-		add_settings_field( 'client_secret', esc_html__(' Enter your client secret ', 'push-syndication' ), array( $this, 'display_client_secret' ), 'api_token', 'api_token' );
+		add_settings_section( 'api_token', esc_html__( 'API Token Configuration', 'push-syndication' ), array( $this, 'display_apitoken_description' ), 'api_token' );
+		add_settings_field( 'client_id', esc_html__( 'Enter your client id', 'push-syndication' ), array( $this, 'display_client_id' ), 'api_token', 'api_token' );
+		add_settings_field( 'client_secret', esc_html__( 'Enter your client secret', 'push-syndication' ), array( $this, 'display_client_secret' ), 'api_token', 'api_token' );
 
+		add_settings_section( 'notifications', esc_html__( 'Notifications', 'push-syndication' ), array( $this, 'display_notifications_description' ), 'notifications' );
+		add_settings_field( 'notification_methods', esc_html__( 'Enable notifications', 'push-syndication' ), array( $this, 'display_notification_method_selection' ), 'notifications', 'notifications' );
+		add_settings_field( 'notification_types', esc_html__( 'Send notification on', 'push-syndication' ), array( $this, 'display_notification_type_selection' ), 'notifications', 'notifications' );
 		?>
-
 		<div class="wrap" xmlns="http://www.w3.org/1999/html">
 
 			<?php screen_icon(); // @TODO custom screen icon ?>
@@ -357,11 +375,13 @@ class WP_Push_Syndication_Server {
 
 				<?php do_settings_sections( 'push_syndicate_pull_options' ); ?>
 
-				<?php submit_button( '  Pull Now ' ); ?>
+				<?php submit_button( 'Pull Now' ); ?>
 
 				<?php do_settings_sections( 'push_syndicate_post_types' ); ?>
 
 				<?php do_settings_sections( 'delete_pushed_posts' ); ?>
+
+				<?php do_settings_sections( 'notifications' ); ?>
 
 				<?php do_settings_sections( 'api_token' ); ?>
 
@@ -372,9 +392,45 @@ class WP_Push_Syndication_Server {
 			<?php $this->get_api_token() ?>
 
 		</div>
-
 		<?php
+	}
 
+	public function display_notifications_description() {
+		echo esc_html__( 'Setup email and Slack notifications.', 'push-syndication' );
+	}
+
+	public function display_notification_method_selection() {
+		echo '<ul>';
+
+		foreach ( array( 'email', 'slack' ) as $notification_method ) {
+			?>
+			<li>
+				<label>
+					<input type="checkbox" name="push_syndicate_settings[notification_methods][]" value="<?php echo esc_attr( $notification_method ); ?>" <?php echo $this->checked_array( $notification_method, $this->push_syndicate_settings['notification_methods'] ); ?> />
+					<?php echo esc_html( ucfirst( $notification_method ) ); ?>
+				</label>
+			</li>
+			<?php
+		}
+
+		echo '</ul>';
+	}
+
+	public function display_notification_type_selection() {
+		echo '<ul>';
+
+		foreach ( array( 'push-new-post', 'pull-new-post', 'push-edit-post', 'pull-edit-post', 'push-delete-post' ) as $notification_type ) {
+			?>
+			<li>
+				<label>
+					<input type="checkbox" name="push_syndicate_settings[notification_types][]" value="<?php echo esc_attr( $notification_type ); ?>" <?php echo $this->checked_array( $notification_type, $this->push_syndicate_settings['notification_types'] ); ?> />
+					<?php echo esc_html( ucfirst( str_replace( '-', ' ', $notification_type ) ) ); ?>
+				</label>
+			</li>
+			<?php
+		}
+
+		echo '</ul>';
 	}
 
 	public function display_pull_sitegroups_description() {
