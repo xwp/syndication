@@ -1,11 +1,18 @@
 <?php
-
 /**
  * Syndication_Notifier implements a unified notification mechanism for the syndication plugin.
  *
+ * @since 2.1
+ * @package Syndication
  */
 class Syndication_Notifier {
-
+	/**
+	 * Construct
+	 *
+	 * Syndication_Notifier constructor.
+	 *
+	 * @since 2.1
+	 */
 	public function __construct() {
 		add_action( 'syn_post_pull_new_post', array( $this, 'notify_new' ), 10, 5 );
 		add_action( 'syn_post_pull_edit_post', array( $this, 'notify_update' ), 10, 5 );
@@ -15,16 +22,19 @@ class Syndication_Notifier {
 	}
 
 	/**
-	 * Notify about a new post creation event
-	 * usually implemented via action hook
-	 * do_action( 'syn_post_pull_new_post', $result, $post, $site, $transport_type, $client );
-	 * do_action( 'syn_post_push_new_post', $result, $post_ID, $site, $transport_type, $client, $info );
+	 * Notify New
 	 *
-	 * @param  mixed  $result         Result object of previous wp_insert_post action
-	 * @param  mixed  $post           Post object or post_id
-	 * @param  object $site           Post object for the site doing the syndication
-	 * @param  string $transport_type Post meta syn_transport_type for site
-	 * @param  object $client         Syndication_Client class
+	 * Notify about a new post creation event usually implemented via action hook
+	 *
+	 * `do_action( 'syn_post_pull_new_post', $result, $post, $site, $transport_type, $client );`
+	 * `do_action( 'syn_post_push_new_post', $result, $post_ID, $site, $transport_type, $client, $info );`
+	 *
+	 * @since 2.1
+	 * @param mixed  $result         Result object of previous wp_insert_post action
+	 * @param mixed  $post           Post object or post_id
+	 * @param object $site           Post object for the site doing the syndication
+	 * @param string $transport_type Post meta syn_transport_type for site
+	 * @param object $client         Syndication_Client class
 	 */
 	public function notify_new( $result, $post, $site, $transport_type, $client ) {
 		$this->notify_post_event( 'new', $result, $post, $site, $transport_type, $client );
