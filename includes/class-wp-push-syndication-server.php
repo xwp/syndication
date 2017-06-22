@@ -1,7 +1,17 @@
 <?php
+/**
+ * WP_Push_Syndication_Server creates the settings page and functionality.
+ *
+ * @package Syndication
+ */
 
 require_once( dirname( __FILE__ ) . '/class-syndication-client-factory.php' );
 
+/**
+ * Class WP_Push_Syndication_Server
+ *
+ * @package Syndication
+ */
 class WP_Push_Syndication_Server {
 
 	const CUSTOM_USER_AGENT = 'WordPress/Syndication Plugin';
@@ -12,51 +22,58 @@ class WP_Push_Syndication_Server {
 
 	private $version;
 
+	/**
+	 * WP_Push_Syndication_Server constructor.
+	 */
 	function __construct() {
-
-		// initialization
+		// Initialization.
 		add_action( 'init', array( $this, 'init' ) );
 		add_action( 'admin_init', array( $this, 'admin_init' ) );
 
-		// custom columns
+		// Custom columns.
 		add_filter( 'manage_edit-syn_site_columns', array( $this, 'add_new_columns' ) );
-		add_action( 'manage_syn_site_posts_custom_column', array( $this, 'manage_columns' ), 10, 2);
+		add_action( 'manage_syn_site_posts_custom_column', array( $this, 'manage_columns' ), 10, 2 );
 
-		// submenus
+		// Custom columns in posts list.
+		add_filter( 'manage_posts_columns', array( $this, 'posts_add_new_columns' ) );
+		add_action( 'manage_posts_custom_column', array( $this, 'posts_manage_columns' ), 10, 2 );
+
+		// Submenus.
 		add_action( 'admin_menu', array( $this, 'register_syndicate_settings' ) );
 
-		// defining sites
+		// Defining sites.
 		add_action( 'save_post', array( $this, 'save_site_settings' ) );
 
-		// loading necessary styles and scripts
+		// Loading necessary styles and scripts.
 		add_action( 'admin_enqueue_scripts', array( $this, 'load_scripts_and_styles' ) );
 
-		// filter admin notices in custom post types
+		// Filter admin notices in custom post types.
 		add_filter( 'post_updated_messages', array( $this, 'push_syndicate_admin_messages' ) );
 
-		// syndicating content
+		// Syndicating content.
 		add_action( 'add_meta_boxes', array( $this, 'add_post_metaboxes' ) );
 		add_action( 'transition_post_status', array( $this, 'save_syndicate_settings' ) ); // use transition_post_status instead of save_post because the former is fired earlier which causes race conditions when a site group select and publish happen on the same load
 		add_action( 'wp_trash_post', array( $this, 'delete_content' ) );
 
-		// adding custom time interval
+		// Adding custom time interval.
 		add_filter( 'cron_schedules', array( $this, 'cron_add_pull_time_interval' ) );
 
-		// firing a cron job
+		// Firing a cron job.
 		add_action( 'transition_post_status', array( $this, 'pre_schedule_push_content' ), 10, 3 );
 		add_action( 'delete_post', array( $this, 'schedule_delete_content' ) );
 
-		// Handle changes to sites and site groups
+		// Handle changes to sites and site groups.
 		add_action( 'save_post', array( $this, 'handle_site_change' ) );
 		add_action( 'delete_post', array( $this, 'handle_site_change' ) );
 		add_action( 'create_term', array( $this, 'handle_site_group_change' ), 10, 3 );
 		add_action( 'delete_term', array( $this, 'handle_site_group_change' ), 10, 3 );
 
-		// Generic hook for reprocessing all scheduled pull jobs. This allows
-		// for bulk rescheduling of jobs that were scheduled the old way (one job
-		// for many sites).
+		/*
+		 * Generic hook for reprocessing all scheduled pull jobs. This allows
+		 * for bulk rescheduling of jobs that were scheduled the old way (one job
+		 * for many sites).
+		 */
 		add_action( 'syn_refresh_pull_jobs', array( $this, 'refresh_pull_jobs' ) );
-
 
 		$this->register_syndicate_actions();
 
@@ -139,6 +156,8 @@ class WP_Push_Syndication_Server {
 		$this->push_syndicate_default_settings = array(
 			'selected_pull_sitegroups'  => array(),
 			'selected_post_types'       => array( 'post' ),
+			'notification_methods'      => array(),
+			'notification_types'        => array(),
 			'delete_pushed_posts'       => 'off',
 			'pull_time_interval'        => '3600',
 			'update_pulled_posts'       => 'off',
@@ -202,6 +221,60 @@ class WP_Push_Syndication_Server {
 		}
 	}
 
+	/**
+	 * Posts Add New Columns
+	 *
+	 * Add custom column to the Posts list table.
+	 *
+	 * @since 2.1
+	 * @see manage_posts_columns
+	 * @param array $post_columns An array of column names.
+	 * @return array An array of new column names.
+	 */
+	public function posts_add_new_columns( $post_columns ) {
+		$post_columns['syn_post_sitegroup'] = _x( 'Syndication Groups', 'column name', 'push-syndication' );
+		return $post_columns;
+	}
+
+	/**
+	 * Posts Manage Columns
+	 *
+	 * Display site group links in the Posts list table.
+	 *
+	 * @since 2.1
+	 * @see manage_posts_custom_column
+	 * @param string $column_name The name of the column to display.
+	 * @param int    $post_id     The current post ID.
+	 */
+	public function posts_manage_columns( $column_name, $post_id ) {
+		if ( 'syn_post_sitegroup' === $column_name ) {
+			// Get post site groups.
+			$selected_sitegroups = get_post_meta( $post_id, '_syn_selected_sitegroups', true );
+
+			if ( empty( $selected_sitegroups ) ) {
+				echo '<span aria-hidden="true">—</span>';
+			} else {
+				// Get post's site groups
+				$sitegroups = get_terms( 'syn_sitegroup', array(
+					'fields'     => 'all',
+					'slug'       => $selected_sitegroups,
+					'hide_empty' => false,
+					'orderby'    => 'name',
+				) );
+
+				// Build links
+				$links = array();
+
+				foreach ( $sitegroups as $sitegroup ) {
+					$url     = get_admin_url() . 'edit.php?post_type=syn_site&syn_sitegroup=' . $sitegroup->slug;
+					$links[] = '<a href="' . esc_url( $url ) . '">' . esc_html( $sitegroup->name ) . '</a>';
+				}
+
+				echo wp_kses_post( implode( ', ', $links ) );
+			}
+		}
+	}
+
 	public function admin_init() {
 		// @TODO define more parameters
 		$name_match = '#class-syndication-(.+)-client\.php$#';
@@ -243,51 +316,93 @@ class WP_Push_Syndication_Server {
 		}
 	}
 
+	/**
+	 * Push Syndicate Settings Validate
+	 *
+	 * Sanitizes settings data.
+	 *
+	 * @see admin_init()
+	 * @param array $raw_settings The raw data to be sanitized.
+	 * @return mixed
+	 */
 	public function push_syndicate_settings_validate( $raw_settings ) {
-
-		$settings                               = array();
 		$settings['client_id']                  = sanitize_text_field( $raw_settings['client_id'] );
 		$settings['client_secret']              = sanitize_text_field( $raw_settings['client_secret'] );
-		$settings['selected_post_types']        = !empty( $raw_settings['selected_post_types'] ) ? $raw_settings['selected_post_types'] : array() ;
-		$settings['delete_pushed_posts']        = !empty( $raw_settings['delete_pushed_posts'] ) ? $raw_settings['delete_pushed_posts'] : 'off' ;
-		$settings['selected_pull_sitegroups']   = !empty( $raw_settings['selected_pull_sitegroups'] ) ? $raw_settings['selected_pull_sitegroups'] : array() ;
-		$settings['pull_time_interval']         = !empty( $raw_settings['pull_time_interval'] ) ? max( $raw_settings['pull_time_interval'], 300 ) : '3600';
-		$settings['update_pulled_posts']        = !empty( $raw_settings['update_pulled_posts'] ) ? $raw_settings['update_pulled_posts'] : 'off' ;
+		$settings['selected_post_types']        = ! empty( $raw_settings['selected_post_types'] ) ? $raw_settings['selected_post_types'] : array();
+		$settings['notification_methods']       = ! empty( $raw_settings['notification_methods'] ) ? $raw_settings['notification_methods'] : array();
+		$settings['notification_types']         = ! empty( $raw_settings['notification_types'] ) ? $raw_settings['notification_types'] : array();
+		$settings['delete_pushed_posts']        = ! empty( $raw_settings['delete_pushed_posts'] ) ? $raw_settings['delete_pushed_posts'] : 'off';
+		$settings['selected_pull_sitegroups']   = ! empty( $raw_settings['selected_pull_sitegroups'] ) ? $raw_settings['selected_pull_sitegroups'] : array();
+		$settings['pull_time_interval']         = ! empty( $raw_settings['pull_time_interval'] ) ? max( $raw_settings['pull_time_interval'], 300 ) : '3600';
+		$settings['update_pulled_posts']        = ! empty( $raw_settings['update_pulled_posts'] ) ? $raw_settings['update_pulled_posts'] : 'off';
 
 		$this->pre_schedule_pull_content( $settings['selected_pull_sitegroups'] );
 
 		return $settings;
+	}
 
+	/**
+	 * Sanitize Array
+	 *
+	 * Takes an array of raw data and runs through each element, sanitizing the
+	 * raw data on the way.
+	 *
+	 * @since 2.1
+	 * @param mixed $data The data to be sanitized.
+	 * @return array|string
+	 */
+	public function sanitize_array( $data ) {
+		if ( ! is_array( $data ) ) {
+			return sanitize_text_field( $data );
+		} else {
+			foreach ( $data as $key => $item ) {
+				if ( is_array( $item ) ) {
+					$data[ $key ] = $this->sanitize_array( $item );
+				} else {
+					$data[ $key ] = sanitize_text_field( $item );
+				}
+
+				return $data;
+			}
+		}
 	}
 
 	public function register_syndicate_settings() {
-		add_submenu_page( 'options-general.php', esc_html__( 'Push Syndication Settings', 'push-syndication' ), esc_html__( 'Push Syndication', 'push-syndication' ), apply_filters('syn_syndicate_cap', 'manage_options'), 'push-syndicate-settings', array( $this, 'display_syndicate_settings' ) );
+		add_submenu_page( 'options-general.php', esc_html__( 'Push Syndication Settings', 'push-syndication' ), esc_html__( 'Push Syndication', 'push-syndication' ), apply_filters( 'syn_syndicate_cap', 'manage_options'), 'push-syndicate-settings', array( $this, 'display_syndicate_settings' ) );
 	}
 
+	/**
+	 * Display Syndicate Settings
+	 *
+	 * Callback method to create the actual settings page.
+	 *
+	 * @see register_syndicate_settings()
+	 * @return null
+	 */
 	public function display_syndicate_settings() {
-
 		add_settings_section( 'push_syndicate_pull_sitegroups', esc_html__( 'Site Groups' , 'push-syndication' ), array( $this, 'display_pull_sitegroups_description' ), 'push_syndicate_pull_sitegroups' );
-		add_settings_field( 'pull_sitegroups_selection', esc_html__( 'select sitegroups', 'push-syndication' ), array( $this, 'display_pull_sitegroups_selection' ), 'push_syndicate_pull_sitegroups', 'push_syndicate_pull_sitegroups' );
+		add_settings_field( 'pull_sitegroups_selection', esc_html__( 'Select sitegroups', 'push-syndication' ), array( $this, 'display_pull_sitegroups_selection' ), 'push_syndicate_pull_sitegroups', 'push_syndicate_pull_sitegroups' );
 
 		add_settings_section( 'push_syndicate_pull_options', esc_html__( 'Pull Options' , 'push-syndication' ), array( $this, 'display_pull_options_description' ), 'push_syndicate_pull_options' );
 		add_settings_field( 'pull_time_interval', esc_html__( 'Specify time interval in seconds', 'push-syndication' ), array( $this, 'display_time_interval_selection' ), 'push_syndicate_pull_options', 'push_syndicate_pull_options' );
 		add_settings_field( 'max_pull_attempts', esc_html__( 'Maximum pull attempts', 'push-syndication' ), array( $this, 'display_max_pull_attempts' ), 'push_syndicate_pull_options', 'push_syndicate_pull_options' );
-		add_settings_field( 'update_pulled_posts', esc_html__( 'update pulled posts', 'push-syndication' ), array( $this, 'display_update_pulled_posts_selection' ), 'push_syndicate_pull_options', 'push_syndicate_pull_options' );
+		add_settings_field( 'update_pulled_posts', esc_html__( 'Update pulled posts', 'push-syndication' ), array( $this, 'display_update_pulled_posts_selection' ), 'push_syndicate_pull_options', 'push_syndicate_pull_options' );
 
 		add_settings_section( 'push_syndicate_post_types', esc_html__( 'Post Types' , 'push-syndication' ), array( $this, 'display_push_post_types_description' ), 'push_syndicate_post_types' );
-		add_settings_field( 'post_type_selection', esc_html__( 'select post types', 'push-syndication' ), array( $this, 'display_post_types_selection' ), 'push_syndicate_post_types', 'push_syndicate_post_types' );
+		add_settings_field( 'post_type_selection', esc_html__( 'Select post types', 'push-syndication' ), array( $this, 'display_post_types_selection' ), 'push_syndicate_post_types', 'push_syndicate_post_types' );
 
-		add_settings_section( 'delete_pushed_posts', esc_html__(' Delete Pushed Posts ', 'push-syndication' ), array( $this, 'display_delete_pushed_posts_description' ), 'delete_pushed_posts' );
-		add_settings_field( 'delete_post_check', esc_html__(' delete pushed posts ', 'push-syndication' ), array( $this, 'display_delete_pushed_posts_selection' ), 'delete_pushed_posts', 'delete_pushed_posts' );
+		add_settings_section( 'delete_pushed_posts', esc_html__( 'Delete Pushed Posts', 'push-syndication' ), array( $this, 'display_delete_pushed_posts_description' ), 'delete_pushed_posts' );
+		add_settings_field( 'delete_post_check', esc_html__( 'Delete pushed posts', 'push-syndication' ), array( $this, 'display_delete_pushed_posts_selection' ), 'delete_pushed_posts', 'delete_pushed_posts' );
 
-		add_settings_section( 'api_token', esc_html__(' API Token Configuration ', 'push-syndication' ), array( $this, 'display_apitoken_description' ), 'api_token' );
-		add_settings_field( 'client_id', esc_html__(' Enter your client id ', 'push-syndication' ), array( $this, 'display_client_id' ), 'api_token', 'api_token' );
-		add_settings_field( 'client_secret', esc_html__(' Enter your client secret ', 'push-syndication' ), array( $this, 'display_client_secret' ), 'api_token', 'api_token' );
+		add_settings_section( 'notifications', esc_html__( 'Notifications', 'push-syndication' ), array( $this, 'display_notifications_description' ), 'notifications' );
+		add_settings_field( 'notification_methods', esc_html__( 'Enable notifications', 'push-syndication' ), array( $this, 'display_notification_method_selection' ), 'notifications', 'notifications' );
+		add_settings_field( 'notification_types', esc_html__( 'Send notification on', 'push-syndication' ), array( $this, 'display_notification_type_selection' ), 'notifications', 'notifications' );
 
+		add_settings_section( 'api_token', esc_html__( 'API Token Configuration', 'push-syndication' ), array( $this, 'display_apitoken_description' ), 'api_token' );
+		add_settings_field( 'client_id', esc_html__( 'Enter your client id', 'push-syndication' ), array( $this, 'display_client_id' ), 'api_token', 'api_token' );
+		add_settings_field( 'client_secret', esc_html__( 'Enter your client secret', 'push-syndication' ), array( $this, 'display_client_secret' ), 'api_token', 'api_token' );
 		?>
-
 		<div class="wrap" xmlns="http://www.w3.org/1999/html">
-
 			<?php screen_icon(); // @TODO custom screen icon ?>
 
 			<h2><?php esc_html_e( 'Push Syndicate Settings', 'push-syndication' ); ?></h2>
@@ -300,11 +415,13 @@ class WP_Push_Syndication_Server {
 
 				<?php do_settings_sections( 'push_syndicate_pull_options' ); ?>
 
-				<?php submit_button( '  Pull Now ' ); ?>
+				<?php submit_button( 'Pull Now' ); ?>
 
 				<?php do_settings_sections( 'push_syndicate_post_types' ); ?>
 
 				<?php do_settings_sections( 'delete_pushed_posts' ); ?>
+
+				<?php do_settings_sections( 'notifications' ); ?>
 
 				<?php do_settings_sections( 'api_token' ); ?>
 
@@ -313,11 +430,35 @@ class WP_Push_Syndication_Server {
 			</form>
 
 			<?php $this->get_api_token() ?>
-
 		</div>
-
 		<?php
+	}
 
+	/**
+	 * Form Checkbox
+	 *
+	 * Generates a checkbox form item.
+	 *
+	 * @param array  $setting_options The options for the checkboxes.
+	 * @param string $setting_key The settings key which stores the values of the form item.
+	 */
+	public function form_checkbox( $setting_options = array(), $setting_key ) {
+
+		foreach ( $setting_options as $option_key => $option ) {
+			?>
+			<p>
+				<label>
+					<input type="checkbox" name="push_syndicate_settings[<?php echo esc_attr( $setting_key ); ?>][]" value="<?php echo esc_attr( $option_key ); ?>" <?php $this->checked_array( $option_key, $this->push_syndicate_settings[ $setting_key ] ); ?> />
+					<?php echo esc_html( $option['name'] ); ?>
+				</label>
+				<?php
+				if ( ! empty( $option['description'] ) ) :
+					echo esc_html( $option['description'] );
+				endif;
+				?>
+			</p>
+			<?php
+		}
 	}
 
 	public function display_pull_sitegroups_description() {
@@ -325,36 +466,30 @@ class WP_Push_Syndication_Server {
 	}
 
 	public function display_pull_sitegroups_selection() {
-
-		// get all sitegroups
+		// Get all sitegroups.
 		$sitegroups = get_terms( 'syn_sitegroup', array(
 			'fields'        => 'all',
 			'hide_empty'    => false,
-			'orderby'       => 'name'
+			'orderby'       => 'name',
 		) );
 
 		// if there are no sitegroups defined return
-		if( empty( $sitegroups ) ) {
+		if ( empty( $sitegroups ) ) {
 			echo '<p>' . esc_html__( 'No sitegroups defined yet. You must group your sites into sitegroups to syndicate content', 'push-syndication' ) . '</p>';
 			echo '<p><a href="' . esc_url( get_admin_url() . 'edit-tags.php?taxonomy=syn_sitegroup&post_type=syn_site' ) . '" target="_blank" >' . esc_html__( 'Create new', 'push-syndication' ) . '</a></p>';
 			return;
 		}
 
-		foreach( $sitegroups as $sitegroup ) {
+		$options = array();
 
-			?>
-
-			<p>
-				<label>
-					<input type="checkbox" name="push_syndicate_settings[selected_pull_sitegroups][]" value="<?php echo esc_html( $sitegroup->slug ); ?>" <?php $this->checked_array( $sitegroup->slug, $this->push_syndicate_settings['selected_pull_sitegroups'] ) ?> />
-					<?php echo esc_html( $sitegroup->name ); ?>
-				</label>
-				<?php echo esc_html( $sitegroup->description ); ?>
-			</p>
-
-			<?php
-
+		foreach ( $sitegroups as $sitegroup ) {
+			$options[ $sitegroup->slug ] = array(
+				'name'        => $sitegroup->name,
+				'description' => $sitegroup->description,
+			);
 		}
+
+		$this->form_checkbox( $options, 'selected_pull_sitegroups' );
 
 	}
 
@@ -409,29 +544,17 @@ class WP_Push_Syndication_Server {
 	}
 
 	public function display_post_types_selection() {
-
-		// @TODO add more suitable filters
+		// @todo: Add more suitable filters.
 		$post_types = get_post_types( array( 'public' => true ) );
+		$options    = array();
 
-		echo '<ul>';
-
-		foreach( $post_types as $post_type  ) {
-
-			?>
-
-			<li>
-				<label>
-					<input type="checkbox" name="push_syndicate_settings[selected_post_types][]" value="<?php echo esc_attr( $post_type ); ?>" <?php echo $this->checked_array( $post_type, $this->push_syndicate_settings['selected_post_types'] ); ?> />
-					<?php echo esc_html( $post_type ); ?>
-				</label>
-			</li>
-
-			<?php
-
+		foreach ( $post_types as $post_type ) {
+			$options[ $post_type ] = array(
+				'name' => $post_type,
+			);
 		}
 
-		echo '</ul>';
-
+		$this->form_checkbox( $options, 'selected_post_types' );
 	}
 
 	public function display_delete_pushed_posts_description() {
@@ -439,14 +562,55 @@ class WP_Push_Syndication_Server {
 	}
 
 	public function display_delete_pushed_posts_selection() {
-		// @TODO refractor this
+		// @todo: Refractor this.
 		echo '<input type="checkbox" name="push_syndicate_settings[delete_pushed_posts]" value="on" ';
 		echo checked( $this->push_syndicate_settings['delete_pushed_posts'], 'on' ) . ' />';
 	}
 
-	public function  display_apitoken_description() {
-		// @TODO add client type information
-		echo '<p>' . esc_html__( 'To syndicate content to WordPress.com you must ', 'push-syndication' ). '<a href="https://developer.wordpress.com/apps/new/">' . esc_html__( 'create a new application', 'push-syndication' ) . '</a></p>';
+	public function display_notifications_description() {
+		echo esc_html__( 'Setup email and Slack notifications.', 'push-syndication' );
+	}
+
+	public function display_notification_method_selection() {
+		$this->form_checkbox(
+			array(
+				'email' => array(
+					'name' => 'Email notifications',
+				),
+				'slack' => array(
+					'name' => 'Slack notifications',
+				),
+			),
+			'notification_methods'
+		);
+	}
+
+	public function display_notification_type_selection() {
+		$this->form_checkbox(
+			array(
+				'push-new-post'    => array(
+					'name' => 'Push new post',
+				),
+				'pull-new-post'    => array(
+					'name' => 'Pull new post',
+				),
+				'push-edit-post'   => array(
+					'name' => 'Push edit post',
+				),
+				'pull-edit-post'   => array(
+					'name' => 'Pull edit post',
+				),
+				'push-delete-post' => array(
+					'name' => 'Push delete post',
+				),
+			),
+			'notification_types'
+		);
+	}
+
+	public function display_apitoken_description() {
+		// @todo: Add client type information.
+		echo '<p>' . esc_html__( 'To syndicate content to WordPress.com you must ', 'push-syndication' ) . '<a href="https://developer.wordpress.com/apps/new/">' . esc_html__( 'create a new application', 'push-syndication' ) . '</a></p>';
 		echo '<p>' . esc_html__( 'Enter the Redirect URI as follows', 'push-syndication' ) . '</p>';
 		echo '<p><b>' . esc_html( menu_page_url( 'push-syndicate-settings', false ) ) . '</p></b>';
 	}
@@ -530,45 +694,6 @@ class WP_Push_Syndication_Server {
 		<?php
 
 		echo '<p>' . esc_html__( 'Enter the above details in relevant fields when registering a ', 'push-syndication' ). '<a href="http://wordpress.com" target="_blank">WordPress.com</a>' . esc_html__( 'site', 'push-syndication' ) . '</p>';
-
-	}
-
-	public function display_sitegroups_selection() {
-
-		echo '<h3>' . esc_html__( 'Select Sitegroups', 'push-syndication' ) . '</h3>';
-
-		$selected_sitegroups = get_option( 'syn_selected_sitegroups' );
-		$selected_sitegroups = !empty( $selected_sitegroups ) ? $selected_sitegroups : array() ;
-
-		// get all sitegroups
-		$sitegroups = get_terms( 'syn_sitegroup', array(
-			'fields'        => 'all',
-			'hide_empty'    => false,
-			'orderby'       => 'name'
-		) );
-
-		// if there are no sitegroups defined return
-		if( empty( $sitegroups ) ) {
-			echo '<p>' . esc_html__( 'No sitegroups defined yet. You must group your sites into sitegroups to syndicate content', 'push-syndication' ) . '</p>';
-			echo '<p><a href="' . esc_url( get_admin_url() . 'edit-tags.php?taxonomy=syn_sitegroup&post_type=syn_site' ) . '" target="_blank" >' . esc_html__( 'Create new', 'push-syndication' ) . '</a></p>';
-			return;
-		}
-
-		foreach( $sitegroups as $sitegroup ) {
-
-			?>
-
-			<p>
-				<label>
-					<input type="checkbox" name="syn_selected_sitegroups[]" value="<?php echo esc_html( $sitegroup->slug ); ?>" <?php $this->checked_array( $sitegroup->slug, $selected_sitegroups ) ?> />
-					<?php echo esc_html( $sitegroup->name ); ?>
-				</label>
-				<?php echo esc_html( $sitegroup->description ); ?>
-			</p>
-
-			<?php
-
-		}
 
 	}
 
@@ -815,10 +940,17 @@ class WP_Push_Syndication_Server {
 
 	}
 
+	/**
+	 * Checked Array
+	 *
+	 * @param string $value The needle.
+	 * @param array  $group The haystack.
+	 * @return null
+	 */
 	public function checked_array( $value, $group ) {
-		if( !empty( $group ) ) {
-			if( in_array( $value, $group ) ) {
-				echo 'checked="checked"';
+		if ( ! empty( $group ) ) {
+			if ( in_array( $value, $group ) ) {
+				echo ' checked="checked"';
 			}
 		}
 	}
